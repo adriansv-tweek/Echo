@@ -1,14 +1,22 @@
 """Tests for TemplateStore. Run with: python -m unittest discover tests"""
 
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from templates import TemplateStore, keywords_from_text  # noqa: E402
+from templates import (  # noqa: E402
+    TemplateStore,
+    data_file,
+    keywords_from_text,
+    legacy_appdata_file,
+    migrate_legacy_file,
+)
 
 
 class TemplateStoreTest(unittest.TestCase):
@@ -91,8 +99,8 @@ class TemplateStoreTest(unittest.TestCase):
         self.assertEqual([t.title for t in self.store.search("manglende")], ["Manglende varer"])
         self.assertEqual([t.title for t in self.store.search("levering")], ["Leveringstid"])
         self.assertEqual(self.store.search("ukjent"), [])
-        self.assertEqual(len(self.store.search("")), 2)
-        self.assertEqual(len(self.store.search("   ")), 2)
+        self.assertEqual(self.store.search(""), [])
+        self.assertEqual(self.store.search("   "), [])
 
     def test_search_requires_all_terms(self) -> None:
         self.store.add("Manglende varer", ["mangler"], "a")
@@ -100,14 +108,35 @@ class TemplateStoreTest(unittest.TestCase):
         self.assertEqual(len(self.store.search("manglende varer")), 1)
         self.assertEqual(len(self.store.search("manglende retur")), 0)
 
-    def test_search_ranks_exact_then_prefix_then_keyword(self) -> None:
-        self.store.add("Retur av varer", [], "a")
-        self.store.add("Refusjon", ["retur"], "b")
-        self.store.add("Retur", [], "c")
+    def test_search_ranks_exact_prefix_substring_then_keyword(self) -> None:
+        self.store.add("Other", ["manglende"], "a")
+        self.store.add("Foo manglende bar", [], "b")
+        self.store.add("Manglende varer", [], "c")
+        self.store.add("Manglende", [], "d")
 
         self.assertEqual(
-            [t.title for t in self.store.search("retur")],
-            ["Retur", "Retur av varer", "Refusjon"],
+            [t.title for t in self.store.search("manglende")],
+            ["Manglende", "Manglende varer", "Foo manglende bar", "Other"],
+        )
+
+    def test_search_is_case_insensitive(self) -> None:
+        self.store.add("Manglende", [], "a")
+        self.store.add("Refusjon bank", ["bank"], "b")
+        self.store.add("Refusjon Trumf", ["trumf"], "c")
+        self.store.add("Mugg", ["mat"], "d")
+
+        self.assertEqual([t.title for t in self.store.search("manglende")], ["Manglende"])
+        self.assertEqual([t.title for t in self.store.search("refusjon bank")], ["Refusjon bank"])
+        self.assertEqual([t.title for t in self.store.search("REFUSJON BANK")], ["Refusjon bank"])
+        self.assertEqual([t.title for t in self.store.search("refusjon trumf")], ["Refusjon Trumf"])
+        self.assertEqual([t.title for t in self.store.search("mugg")], ["Mugg"])
+
+    def test_search_collapses_extra_spaces(self) -> None:
+        self.store.add("Refusjon bank", [], "a")
+
+        self.assertEqual(
+            [t.title for t in self.store.search("  refusjon   bank  ")],
+            ["Refusjon bank"],
         )
 
     def test_add_edit_delete(self) -> None:
@@ -155,6 +184,17 @@ class TemplateStoreTest(unittest.TestCase):
 
         self.assertEqual(self.path.read_text(encoding="utf-8"), before)
 
+    def test_oserror_during_save_keeps_existing_file(self) -> None:
+        self.store.add("Keep me", [], "body")
+        before = self.path.read_text(encoding="utf-8")
+
+        with patch("templates.open", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.store.add("New", [], "nope")
+
+        self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+        self.assertEqual([t.title for t in self.store.templates], ["Keep me"])
+
     def test_duplicate_and_blank_keywords_are_cleaned(self) -> None:
         template = self.store.add("T", ["a", " a ", "A", "", "b"], "x")
         self.assertEqual(template.keywords, ["a", "b"])
@@ -162,6 +202,82 @@ class TemplateStoreTest(unittest.TestCase):
     def test_keywords_from_text(self) -> None:
         self.assertEqual(keywords_from_text("one, two ,, three"), ["one", "two", "three"])
         self.assertEqual(keywords_from_text(""), [])
+
+    def test_failed_add_rolls_back_memory(self) -> None:
+        self.store.add("Keep me", [], "body")
+        original = list(self.store.templates)
+
+        def fail_save() -> None:
+            raise OSError("disk full")
+
+        self.store.save = fail_save  # type: ignore[method-assign]
+        with self.assertRaises(OSError):
+            self.store.add("Lost", [], "nope")
+
+        self.assertEqual([t.title for t in self.store.templates], [t.title for t in original])
+
+    def test_data_file_is_repo_data_templates_json(self) -> None:
+        path = data_file()
+        root = Path(__file__).resolve().parent.parent
+        self.assertEqual(path, root / "data" / "templates.json")
+        self.assertEqual(path.parent.name, "data")
+        self.assertEqual(path.name, "templates.json")
+
+    def test_data_file_does_not_use_appdata(self) -> None:
+        original = os.environ.get("APPDATA")
+        os.environ["APPDATA"] = r"C:\FakeAppData\ShouldNotBeUsed"
+        try:
+            path = str(data_file())
+            self.assertNotIn("FakeAppData", path)
+            self.assertNotIn("ShouldNotBeUsed", path)
+            self.assertTrue(path.replace("\\", "/").endswith("data/templates.json"))
+        finally:
+            if original is None:
+                os.environ.pop("APPDATA", None)
+            else:
+                os.environ["APPDATA"] = original
+
+    def test_legacy_appdata_path_is_only_for_migration(self) -> None:
+        original = os.environ.get("APPDATA")
+        os.environ["APPDATA"] = r"C:\FakeAppData"
+        try:
+            legacy = legacy_appdata_file()
+            current = data_file()
+            self.assertEqual(legacy, Path(r"C:\FakeAppData") / "Echo" / "templates.json")
+            self.assertNotEqual(legacy, current)
+        finally:
+            if original is None:
+                os.environ.pop("APPDATA", None)
+            else:
+                os.environ["APPDATA"] = original
+
+    def test_migrate_copies_legacy_when_target_is_missing(self) -> None:
+        legacy = self.dir / "legacy.json"
+        target = self.dir / "data" / "templates.json"
+        legacy.write_text('{"templates": [{"id": "1", "title": "Old", "text": "x"}]}', encoding="utf-8")
+
+        self.assertTrue(migrate_legacy_file(legacy, target))
+        self.assertTrue(target.exists())
+        self.assertIn("Old", target.read_text(encoding="utf-8"))
+
+    def test_migrate_does_not_overwrite_existing_target(self) -> None:
+        legacy = self.dir / "legacy.json"
+        target = self.dir / "templates.json"
+        legacy.write_text('{"templates": [{"id": "1", "title": "Old", "text": "x"}]}', encoding="utf-8")
+        target.write_text('{"templates": []}', encoding="utf-8")
+
+        self.assertFalse(migrate_legacy_file(legacy, target))
+        self.assertEqual(target.read_text(encoding="utf-8"), '{"templates": []}')
+
+    def test_migrate_is_noop_when_legacy_missing(self) -> None:
+        target = self.dir / "templates.json"
+        self.assertFalse(migrate_legacy_file(self.dir / "missing.json", target))
+        self.assertFalse(target.exists())
+
+    def test_migrate_does_not_copy_onto_itself(self) -> None:
+        path = self.dir / "templates.json"
+        path.write_text("{}", encoding="utf-8")
+        self.assertFalse(migrate_legacy_file(path, path))
 
 
 if __name__ == "__main__":

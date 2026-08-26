@@ -1,4 +1,4 @@
-"""Main Echo window: search, preview, and template editing."""
+"""Main Echo window: search, preview, and inline template editing."""
 
 from __future__ import annotations
 
@@ -9,9 +9,6 @@ from ctypes import wintypes
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -21,15 +18,16 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from clipboard import copy_text
 from templates import Template, TemplateStore, keywords_from_text, keywords_to_text
+from workflow import enter_action, next_result_row
 
-HINT = "Type to search. Enter selects, Enter again copies. Esc hides Echo."
+HINT = "Type to search. Enter selects, Enter copies, Esc hides."
 
 
 def _bring_to_front(window: QMainWindow) -> None:
@@ -66,145 +64,147 @@ def _bring_to_front(window: QMainWindow) -> None:
 
 
 STYLESHEET = """
-QMainWindow, QWidget#central {
-    background: #f4f4f5;
+* {
+    font-family: "Segoe UI", "Segoe UI Variable Text", sans-serif;
+}
+QMainWindow, QWidget#central, QWidget#browsePage, QWidget#editPage {
+    background: #1c1c1e;
+    color: #f4f4f5;
+}
+QLineEdit, QPlainTextEdit {
+    background: #27272a;
+    color: #fafafa;
+    border: 1px solid #3f3f46;
+    border-radius: 4px;
+    padding: 8px 10px;
+    selection-background-color: #2563eb;
+    selection-color: #ffffff;
 }
 QLineEdit#search {
     padding: 10px 12px;
-    font-size: 16px;
-    border: 1px solid #d4d4d8;
-    border-radius: 8px;
-    background: #ffffff;
+    font-size: 15px;
+}
+QLineEdit::placeholder, QPlainTextEdit::placeholder {
+    color: #a1a1aa;
 }
 QListWidget {
-    border: 1px solid #d4d4d8;
-    border-radius: 8px;
-    background: #ffffff;
+    background: #27272a;
+    color: #f4f4f5;
+    border: 1px solid #3f3f46;
+    border-radius: 4px;
     padding: 4px;
+    outline: none;
 }
 QListWidget::item {
-    padding: 8px 10px;
-    border-radius: 6px;
+    padding: 7px 10px;
+    border-radius: 3px;
+    color: #f4f4f5;
 }
 QListWidget::item:selected {
-    background: #dbeafe;
-    color: #0f172a;
+    background: #2563eb;
+    color: #ffffff;
 }
-QPlainTextEdit {
-    border: 1px solid #d4d4d8;
-    border-radius: 8px;
-    background: #ffffff;
-    padding: 8px;
+QListWidget::item:hover:!selected {
+    background: #3f3f46;
 }
-QLabel#previewTitle {
-    font-size: 14px;
+QPlainTextEdit#preview, QPlainTextEdit#editText {
+    font-size: 13px;
+    line-height: 1.4;
+}
+QLabel {
+    color: #f4f4f5;
+    background: transparent;
+}
+QLabel#previewTitle, QLabel#editHeading {
+    font-size: 13px;
     font-weight: 600;
-    color: #18181b;
+    color: #fafafa;
+}
+QLabel#fieldLabel {
+    font-size: 12px;
+    color: #d4d4d8;
 }
 QLabel#warning {
     padding: 8px 10px;
-    border-radius: 8px;
-    background: #fef3c7;
-    color: #92400e;
+    border-radius: 4px;
+    background: #713f12;
+    color: #fde68a;
 }
 QLabel#status {
-    padding: 8px 10px;
-    border-radius: 8px;
-    color: #3f3f46;
+    padding: 6px 2px;
+    color: #d4d4d8;
+    font-size: 12px;
 }
 QLabel#status[state="copied"] {
-    background: #dcfce7;
-    color: #166534;
+    color: #86efac;
 }
 QLabel#status[state="error"] {
-    background: #fee2e2;
-    color: #991b1b;
+    color: #fca5a5;
 }
 QPushButton {
     padding: 6px 12px;
-    border: 1px solid #d4d4d8;
-    border-radius: 6px;
-    background: #ffffff;
+    border: 1px solid #52525b;
+    border-radius: 4px;
+    background: #27272a;
+    color: #f4f4f5;
 }
 QPushButton:hover {
-    background: #e4e4e7;
+    background: #3f3f46;
+}
+QPushButton:pressed {
+    background: #18181b;
+}
+QPushButton:disabled {
+    color: #71717a;
+    border-color: #3f3f46;
+    background: #27272a;
+}
+QPushButton#iconButton {
+    padding: 0;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    font-size: 14px;
+    border: none;
+    background: transparent;
+    color: #d4d4d8;
+}
+QPushButton#iconButton:hover {
+    background: #3f3f46;
+    color: #fafafa;
+}
+QPushButton#iconButton:disabled {
+    background: transparent;
+    color: #52525b;
+}
+QPushButton#primary {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+QPushButton#primary:hover {
+    background: #3b82f6;
+}
+QPushButton#primary:disabled {
+    background: #1e3a8a;
+    border-color: #1e3a8a;
+    color: #93c5fd;
+}
+QScrollBar:vertical {
+    background: #1c1c1e;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #52525b;
+    min-height: 24px;
+    border-radius: 4px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
 }
 """
-
-
-class TemplateEditorDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, template: Template | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Edit template" if template else "New template")
-        self.resize(560, 480)
-
-        self.title_edit = QLineEdit()
-        self.keywords_edit = QLineEdit()
-        self.keywords_edit.setPlaceholderText("comma, separated, keywords")
-        self.text_edit = QPlainTextEdit()
-        self.text_edit.setPlaceholderText("Template text")
-        self.text_edit.setMinimumHeight(240)
-
-        if template is not None:
-            self.title_edit.setText(template.title)
-            self.keywords_edit.setText(keywords_to_text(template.keywords))
-            self.text_edit.setPlainText(template.text)
-
-        self._original = self._current_values()
-
-        form = QFormLayout()
-        form.addRow("Title", self.title_edit)
-        form.addRow("Keywords", self.keywords_edit)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._accept_if_valid)
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(QLabel("Text"))
-        layout.addWidget(self.text_edit, 1)
-        layout.addWidget(buttons)
-
-        save_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
-        save_shortcut.activated.connect(self._accept_if_valid)
-
-        self.title_edit.setFocus()
-
-    def reject(self) -> None:
-        if self._current_values() != self._original:
-            confirm = QMessageBox.question(
-                self,
-                "Discard changes",
-                "Discard your unsaved changes?",
-                QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Cancel,
-            )
-            if confirm != QMessageBox.Discard:
-                return
-        super().reject()
-
-    def values(self) -> tuple[str, list[str], str]:
-        title, keywords, text = self._current_values()
-        return title.strip(), keywords_from_text(keywords), text
-
-    def _current_values(self) -> tuple[str, str, str]:
-        return (
-            self.title_edit.text(),
-            self.keywords_edit.text(),
-            self.text_edit.toPlainText(),
-        )
-
-    def _accept_if_valid(self) -> None:
-        if not self.title_edit.text().strip():
-            QMessageBox.warning(self, "Missing title", "Please enter a title.")
-            self.title_edit.setFocus()
-            return
-        if not self.text_edit.toPlainText().strip():
-            QMessageBox.warning(self, "Missing text", "Please enter template text.")
-            self.text_edit.setFocus()
-            return
-        self.accept()
 
 
 class MainWindow(QMainWindow):
@@ -213,13 +213,43 @@ class MainWindow(QMainWindow):
         self.store = store
         self.hide_on_close = True
         self._armed = False
+        self._mode = "browse"
+        self._edit_id: str | None = None
+        self._edit_original: tuple[str, str, str] = ("", "", "")
         self._warnings: list[str] = []
         self._status_timer = QTimer(self)
         self._status_timer.setSingleShot(True)
         self._status_timer.timeout.connect(self._clear_status)
 
         self.setWindowTitle("Echo")
-        self.resize(820, 560)
+        self.resize(500, 540)
+        self.setMinimumSize(420, 420)
+
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._build_browse_page())
+        self.pages.addWidget(self._build_edit_page())
+
+        central = QWidget()
+        central.setObjectName("central")
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        layout.addWidget(self.pages)
+        self.setCentralWidget(central)
+        self.setStyleSheet(STYLESHEET)
+
+        QShortcut(QKeySequence("Ctrl+N"), self, self.add_template)
+        QShortcut(QKeySequence("Ctrl+E"), self, self.edit_template)
+        QShortcut(QKeySequence("Ctrl+D"), self, self.delete_template)
+        QShortcut(QKeySequence("Ctrl+Return"), self, self._save_if_editing)
+        QShortcut(QKeySequence("Escape"), self, self._on_escape)
+
+        self.refresh_results()
+        self.search.setFocus()
+
+    def _build_browse_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("browsePage")
 
         self.warning = QLabel()
         self.warning.setObjectName("warning")
@@ -238,62 +268,107 @@ class MainWindow(QMainWindow):
         self.results.currentItemChanged.connect(self._on_current_changed)
         self.results.itemDoubleClicked.connect(self._on_item_double_clicked)
 
-        self.preview_title = QLabel("No template selected")
+        self.preview_title = QLabel("")
         self.preview_title.setObjectName("previewTitle")
         self.preview = QPlainTextEdit()
+        self.preview.setObjectName("preview")
         self.preview.setReadOnly(True)
 
-        new_button = QPushButton("New")
-        edit_button = QPushButton("Edit")
-        delete_button = QPushButton("Delete")
-        new_button.clicked.connect(self.add_template)
-        edit_button.clicked.connect(self.edit_template)
-        delete_button.clicked.connect(self.delete_template)
+        self.new_button = QPushButton("+")
+        self.new_button.setObjectName("iconButton")
+        self.new_button.setToolTip("New")
+        self.new_button.setAccessibleName("New")
+        self.edit_button = QPushButton("✎")
+        self.edit_button.setObjectName("iconButton")
+        self.edit_button.setToolTip("Edit")
+        self.edit_button.setAccessibleName("Edit")
+        self.delete_button = QPushButton("✕")
+        self.delete_button.setObjectName("iconButton")
+        self.delete_button.setToolTip("Delete")
+        self.delete_button.setAccessibleName("Delete")
+        self.new_button.clicked.connect(self.add_template)
+        self.edit_button.clicked.connect(self.edit_template)
+        self.delete_button.clicked.connect(self.delete_template)
 
         self.status = QLabel(HINT)
         self.status.setObjectName("status")
 
-        preview_pane = QWidget()
-        preview_layout = QVBoxLayout(preview_pane)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addWidget(self.preview_title)
-        preview_layout.addWidget(self.preview, 1)
-
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self.results)
-        splitter.addWidget(preview_pane)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-
         buttons = QHBoxLayout()
-        buttons.addWidget(new_button)
-        buttons.addWidget(edit_button)
-        buttons.addWidget(delete_button)
+        buttons.setContentsMargins(0, 0, 0, 0)
         buttons.addStretch()
+        buttons.addWidget(self.new_button)
+        buttons.addWidget(self.edit_button)
+        buttons.addWidget(self.delete_button)
 
-        central = QWidget()
-        central.setObjectName("central")
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
         layout.addWidget(self.warning)
         layout.addWidget(self.search)
-        layout.addWidget(splitter, 1)
+        layout.addWidget(self.results, 1)
+        layout.addWidget(self.preview_title)
+        layout.addWidget(self.preview, 1)
         layout.addLayout(buttons)
         layout.addWidget(self.status)
-        self.setCentralWidget(central)
-        self.setStyleSheet(STYLESHEET)
+        return page
 
-        QShortcut(QKeySequence("Ctrl+N"), self, self.add_template)
-        QShortcut(QKeySequence("Ctrl+E"), self, self.edit_template)
-        QShortcut(QKeySequence("Ctrl+D"), self, self.delete_template)
-        QShortcut(QKeySequence("Escape"), self, self.hide)
+    def _build_edit_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("editPage")
 
-        self.refresh_results()
-        self.search.setFocus()
+        self.edit_heading = QLabel("New template")
+        self.edit_heading.setObjectName("editHeading")
+
+        title_label = QLabel("Title")
+        title_label.setObjectName("fieldLabel")
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("Template title")
+
+        keywords_label = QLabel("Keywords")
+        keywords_label.setObjectName("fieldLabel")
+        self.keywords_edit = QLineEdit()
+        self.keywords_edit.setPlaceholderText("optional, comma separated")
+
+        text_label = QLabel("Template")
+        text_label.setObjectName("fieldLabel")
+        self.text_edit = QPlainTextEdit()
+        self.text_edit.setObjectName("editText")
+        self.text_edit.setPlaceholderText("Generic template text")
+
+        self.cancel_button = QPushButton("Cancel")
+        self.save_button = QPushButton("Save")
+        self.save_button.setObjectName("primary")
+        self.cancel_button.clicked.connect(self._cancel_edit)
+        self.save_button.clicked.connect(self._save_edit)
+
+        self.edit_status = QLabel("")
+        self.edit_status.setObjectName("status")
+
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.addWidget(self.cancel_button)
+        buttons.addStretch()
+        buttons.addWidget(self.save_button)
+
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(self.edit_heading)
+        layout.addWidget(title_label)
+        layout.addWidget(self.title_edit)
+        layout.addWidget(keywords_label)
+        layout.addWidget(self.keywords_edit)
+        layout.addWidget(text_label)
+        layout.addWidget(self.text_edit, 1)
+        layout.addLayout(buttons)
+        layout.addWidget(self.edit_status)
+        return page
 
     def closeEvent(self, event) -> None:
         """With a tray icon present, closing only hides; Echo keeps running."""
+        if self._mode == "edit" and not self._confirm_leave_edit():
+            event.ignore()
+            return
         if self.hide_on_close:
             event.ignore()
             self.hide()
@@ -323,65 +398,53 @@ class MainWindow(QMainWindow):
     def refresh_results(self, _text: str | None = None) -> None:
         self._armed = False
         matches = self.store.search(self.search.text())
-        current_id = self._current_id()
 
         self.results.blockSignals(True)
         self.results.clear()
-        selected_row = 0
-        for index, template in enumerate(matches):
+        for template in matches:
             item = QListWidgetItem(template.title)
             item.setData(Qt.UserRole, template.id)
             item.setToolTip(", ".join(template.keywords))
             self.results.addItem(item)
-            if template.id == current_id:
-                selected_row = index
         self.results.blockSignals(False)
 
         if self.results.count() > 0:
-            self.results.setCurrentRow(selected_row)
+            self.results.setCurrentRow(0)
             self._show_preview(self._current_template())
         else:
             self._show_preview(None)
+        self._update_action_buttons()
 
     def show_and_focus(self) -> None:
         self.showNormal()
         self.raise_()
         self.activateWindow()
         _bring_to_front(self)
+        if self._mode == "edit":
+            self.title_edit.setFocus()
+            self.title_edit.selectAll()
+            return
+        self._armed = False
+        self._clear_status()
+        self.search.clear()
         self.search.setFocus()
-        self.search.selectAll()
 
     def add_template(self) -> None:
-        dialog = TemplateEditorDialog(self)
-        if dialog.exec() != QDialog.Accepted:
+        if self._mode == "edit":
             return
-        title, keywords, text = dialog.values()
-        template = self._guard_save(lambda: self.store.add(title, keywords, text))
-        if template is None:
-            return
-        self.search.clear()
-        self.refresh_results()
-        self._select_id(template.id)
-        self._set_status(f"Added “{template.title}”.")
+        self._enter_edit(None)
 
     def edit_template(self) -> None:
+        if self._mode == "edit":
+            return
         template = self._current_template()
         if template is None:
             return
-        dialog = TemplateEditorDialog(self, template)
-        if dialog.exec() != QDialog.Accepted:
-            return
-        title, keywords, text = dialog.values()
-        updated = self._guard_save(
-            lambda: self.store.update(template.id, title, keywords, text)
-        )
-        if updated is None:
-            return
-        self.refresh_results()
-        self._select_id(updated.id)
-        self._set_status(f"Updated “{updated.title}”.")
+        self._enter_edit(template)
 
     def delete_template(self) -> None:
+        if self._mode == "edit":
+            return
         template = self._current_template()
         if template is None:
             return
@@ -393,25 +456,130 @@ class MainWindow(QMainWindow):
         self.refresh_results()
         self._set_status(f"Deleted “{template.title}”.")
 
+    def _enter_edit(self, template: Template | None) -> None:
+        self._mode = "edit"
+        self._edit_id = None if template is None else template.id
+        if template is None:
+            self.edit_heading.setText("New template")
+            self.setWindowTitle("Echo — New")
+            self.title_edit.clear()
+            self.keywords_edit.clear()
+            self.text_edit.clear()
+        else:
+            self.edit_heading.setText("Editing")
+            self.setWindowTitle("Echo — Editing")
+            self.title_edit.setText(template.title)
+            self.keywords_edit.setText(keywords_to_text(template.keywords))
+            self.text_edit.setPlainText(template.text)
+        self._edit_original = self._edit_values()
+        self.edit_status.setText("Ctrl+Enter saves. Esc cancels.")
+        self.edit_status.setProperty("state", "")
+        self.pages.setCurrentIndex(1)
+        self.title_edit.setFocus()
+
+    def _leave_edit(self) -> None:
+        self._mode = "browse"
+        self._edit_id = None
+        self._edit_original = ("", "", "")
+        self.setWindowTitle("Echo")
+        self.pages.setCurrentIndex(0)
+        self.search.setFocus()
+
+    def _edit_values(self) -> tuple[str, str, str]:
+        return (
+            self.title_edit.text(),
+            self.keywords_edit.text(),
+            self.text_edit.toPlainText(),
+        )
+
+    def _confirm_leave_edit(self) -> bool:
+        if self._edit_values() == self._edit_original:
+            self._leave_edit()
+            return True
+        confirm = QMessageBox.question(
+            self,
+            "Discard changes",
+            "Discard your unsaved changes?",
+            QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if confirm != QMessageBox.Discard:
+            return False
+        self._leave_edit()
+        return True
+
+    def _cancel_edit(self) -> None:
+        self._confirm_leave_edit()
+
+    def _save_if_editing(self) -> None:
+        if self._mode == "edit":
+            self._save_edit()
+
+    def _save_edit(self) -> None:
+        if self._mode != "edit":
+            return
+        title = self.title_edit.text().strip()
+        text = self.text_edit.toPlainText()
+        keywords = keywords_from_text(self.keywords_edit.text())
+        if not title:
+            self._set_edit_status("Please enter a title.", "error")
+            self.title_edit.setFocus()
+            return
+        if not text.strip():
+            self._set_edit_status("Please enter template text.", "error")
+            self.text_edit.setFocus()
+            return
+
+        if self._edit_id is None:
+            template = self._guard_save(lambda: self.store.add(title, keywords, text))
+            action = "Added"
+        else:
+            edit_id = self._edit_id
+            template = self._guard_save(lambda: self.store.update(edit_id, title, keywords, text))
+            action = "Updated"
+        if template is None:
+            return
+
+        self._leave_edit()
+        self.search.clear()
+        self.refresh_results()
+        self._select_id(template.id)
+        self._set_status(f"{action} “{template.title}”.")
+
+    def _on_escape(self) -> None:
+        if self._mode == "edit":
+            self._cancel_edit()
+            return
+        self.hide()
+
     def _guard_save(self, action):
         """Run a store action, reporting disk errors instead of crashing."""
         try:
             return action()
         except OSError as error:
-            self._set_status(f"Could not save templates: {error}", state="error")
+            message = f"Could not save templates: {error}"
+            if self._mode == "edit":
+                self._set_edit_status(message, "error")
+            else:
+                self._set_status(message, state="error")
             return None
 
     def _handle_enter(self) -> None:
-        template = self._current_template()
-        if template is None:
+        if self._mode != "browse":
             return
-        if not self._armed:
+        template = self._current_template()
+        action = enter_action(template is not None, self._armed)
+        if action == "noop":
+            return
+        if action == "select":
             self._armed = True
             self._set_status(f"Selected “{template.title}”. Press Enter to copy.")
             return
         self._copy_template(template)
 
     def _on_item_double_clicked(self, _item: QListWidgetItem) -> None:
+        if self._mode != "browse":
+            return
         template = self._current_template()
         if template is not None:
             self._copy_template(template)
@@ -419,6 +587,7 @@ class MainWindow(QMainWindow):
     def _on_current_changed(self, _current, _previous) -> None:
         self._armed = False
         self._show_preview(self._current_template())
+        self._update_action_buttons()
 
     def _copy_template(self, template: Template) -> None:
         self._armed = False
@@ -428,14 +597,13 @@ class MainWindow(QMainWindow):
                 state="error",
             )
             return
-        self._set_status(f"Copied “{template.title}” to the clipboard.", state="copied")
-        QTimer.singleShot(400, self.hide)
+        self._set_status(f"Copied “{template.title}”.", state="copied")
+        self.hide()
 
     def _move_selection(self, delta: int) -> None:
-        if self.results.count() == 0:
+        row = next_result_row(self.results.count(), self.results.currentRow(), delta)
+        if row is None:
             return
-        row = self.results.currentRow()
-        row = 0 if row < 0 else max(0, min(self.results.count() - 1, row + delta))
         self.results.setCurrentRow(row)
         self._armed = False
 
@@ -455,7 +623,7 @@ class MainWindow(QMainWindow):
 
     def _show_preview(self, template: Template | None) -> None:
         if template is None:
-            self.preview_title.setText("No template selected")
+            self.preview_title.setText("")
             self.preview.setPlainText("")
             return
         keywords = keywords_to_text(template.keywords)
@@ -463,16 +631,25 @@ class MainWindow(QMainWindow):
         self.preview_title.setText(f"{template.title}{subtitle}")
         self.preview.setPlainText(template.text)
 
+    def _update_action_buttons(self) -> None:
+        has_selection = self._current_template() is not None
+        self.edit_button.setEnabled(has_selection)
+        self.delete_button.setEnabled(has_selection)
+
     def _set_status(self, message: str, state: str = "") -> None:
         self.status.setText(message)
-        self._apply_status_state(state)
+        self._apply_status_state(self.status, state)
         self._status_timer.start(4000 if state == "error" else 2500)
+
+    def _set_edit_status(self, message: str, state: str = "") -> None:
+        self.edit_status.setText(message)
+        self._apply_status_state(self.edit_status, state)
 
     def _clear_status(self) -> None:
         self.status.setText(HINT)
-        self._apply_status_state("")
+        self._apply_status_state(self.status, "")
 
-    def _apply_status_state(self, state: str) -> None:
-        self.status.setProperty("state", state)
-        self.status.style().unpolish(self.status)
-        self.status.style().polish(self.status)
+    def _apply_status_state(self, label: QLabel, state: str) -> None:
+        label.setProperty("state", state)
+        label.style().unpolish(label)
+        label.style().polish(label)

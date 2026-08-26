@@ -1,9 +1,9 @@
-# Template data — never commit personal templates
-data/
-templates.json
+# Generated template backups and sidecars — keep data/templates.json tracked
 templates.*.json
 *.bak
 *.tmp
+*.dmp
+*.stackdump
 
 # Python
 .venv/

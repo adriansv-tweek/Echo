@@ -12,18 +12,27 @@ from pathlib import Path
 
 APP_NAME = "Echo"
 FILE_NAME = "templates.json"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def data_file() -> Path:
-    """Templates live in %APPDATA%, never inside the repository."""
+    """Templates live in the repository so the library can be synced with Git."""
+    return PROJECT_ROOT / "data" / FILE_NAME
+
+
+def legacy_appdata_file() -> Path:
+    """Previous storage location from an older Echo version."""
     appdata = os.environ.get("APPDATA")
     base = Path(appdata) if appdata else Path.home() / ".config"
     return base / APP_NAME / FILE_NAME
 
 
 def migrate_legacy_file(legacy: Path, target: Path) -> bool:
-    """Copy templates from an older in-repo location on first run."""
-    if target.exists() or not legacy.exists():
+    """Copy templates from an older location if the current file does not exist.
+
+    Never overwrites an existing target, even if that file is empty.
+    """
+    if target.exists() or not legacy.exists() or legacy.resolve() == target.resolve():
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(legacy, target)
@@ -111,9 +120,9 @@ class TemplateStore:
         os.replace(temp_path, self.path)
 
     def search(self, query: str) -> list[Template]:
-        query = query.strip().casefold()
+        query = " ".join(query.strip().casefold().split())
         if not query:
-            return list(self.templates)
+            return []
 
         terms = query.split()
         matches = [t for t in self.templates if all(term in t.search_blob() for term in terms)]
@@ -133,25 +142,39 @@ class TemplateStore:
             text=text,
         )
         self.templates.append(template)
-        self.save()
+        try:
+            self.save()
+        except Exception:
+            self.templates.pop()
+            raise
         return template
 
     def update(self, template_id: str, title: str, keywords: list[str], text: str) -> Template | None:
         template = self.get(template_id)
         if template is None:
             return None
+        previous = (template.title, list(template.keywords), template.text)
         template.title = title.strip()
         template.keywords = _clean_keywords(keywords)
         template.text = text
-        self.save()
+        try:
+            self.save()
+        except Exception:
+            template.title, template.keywords, template.text = previous
+            raise
         return template
 
     def delete(self, template_id: str) -> bool:
         remaining = [t for t in self.templates if t.id != template_id]
         if len(remaining) == len(self.templates):
             return False
+        previous = self.templates
         self.templates = remaining
-        self.save()
+        try:
+            self.save()
+        except Exception:
+            self.templates = previous
+            raise
         return True
 
     def _copy_aside(self, label: str) -> Path:

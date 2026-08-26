@@ -3,18 +3,40 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from hotkey import HotkeyError, HotkeyListener
-from templates import FILE_NAME, TemplateStore, data_file, migrate_legacy_file
+from hotkey import HOTKEY_NAME, HotkeyError, HotkeyListener
+from templates import TemplateStore, data_file, legacy_appdata_file, migrate_legacy_file
 from ui import MainWindow
 
-ROOT = Path(__file__).resolve().parent.parent
-LEGACY_DATA_FILE = ROOT / "data" / FILE_NAME
+INSTANCE_SERVER = "EchoStandaloneInstance"
+
+
+def apply_dark_palette(app: QApplication) -> None:
+    """Keep native dialogs readable against Echo's dark window."""
+    app.setStyle("Fusion")
+    app.setFont(QFont("Segoe UI", 10))
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor("#1c1c1e"))
+    palette.setColor(QPalette.WindowText, QColor("#f4f4f5"))
+    palette.setColor(QPalette.Base, QColor("#27272a"))
+    palette.setColor(QPalette.AlternateBase, QColor("#18181b"))
+    palette.setColor(QPalette.Text, QColor("#fafafa"))
+    palette.setColor(QPalette.Button, QColor("#27272a"))
+    palette.setColor(QPalette.ButtonText, QColor("#f4f4f5"))
+    palette.setColor(QPalette.Highlight, QColor("#2563eb"))
+    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipBase, QColor("#27272a"))
+    palette.setColor(QPalette.ToolTipText, QColor("#fafafa"))
+    palette.setColor(QPalette.PlaceholderText, QColor("#a1a1aa"))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor("#a1a1aa"))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor("#a1a1aa"))
+    palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor("#a1a1aa"))
+    app.setPalette(palette)
 
 
 def app_icon() -> QIcon:
@@ -37,7 +59,7 @@ def app_icon() -> QIcon:
 
 def build_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon:
     tray = QSystemTrayIcon(app_icon(), app)
-    tray.setToolTip("Echo — Ctrl+Shift+M")
+    tray.setToolTip(f"Echo — {HOTKEY_NAME}")
 
     menu = QMenu()
     menu.addAction("Show Echo", window.show_and_focus)
@@ -54,17 +76,50 @@ def build_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon:
     return tray
 
 
+def _claim_instance(app: QApplication) -> QLocalServer | None:
+    """Keep a single Echo process. Activate the existing one if it is already running."""
+    socket = QLocalSocket()
+    socket.connectToServer(INSTANCE_SERVER)
+    if socket.waitForConnected(200):
+        socket.write(b"show")
+        socket.waitForBytesWritten(200)
+        socket.disconnectFromServer()
+        return None
+
+    QLocalServer.removeServer(INSTANCE_SERVER)
+    server = QLocalServer(app)
+    if not server.listen(INSTANCE_SERVER):
+        return None
+    return server
+
+
+def _bind_activation(server: QLocalServer, window: MainWindow) -> None:
+    def _on_connection() -> None:
+        connection = server.nextPendingConnection()
+        if connection is not None:
+            connection.readyRead.connect(window.show_and_focus)
+        window.show_and_focus()
+
+    server.newConnection.connect(_on_connection)
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Echo")
+    apply_dark_palette(app)
     app.setWindowIcon(app_icon())
 
+    instance_server = _claim_instance(app)
+    if instance_server is None:
+        return 0
+
     path = data_file()
-    migrate_legacy_file(LEGACY_DATA_FILE, path)
+    migrate_legacy_file(legacy_appdata_file(), path)
     store = TemplateStore(path)
     warning = store.load()
 
     window = MainWindow(store)
+    _bind_activation(instance_server, window)
     if warning:
         window.show_warning(warning)
 
@@ -78,15 +133,20 @@ def main() -> int:
             "The Windows system tray is unavailable, so closing this window quits Echo."
         )
 
-    window.show()
-
     listener = HotkeyListener()
     listener.activated.connect(window.show_and_focus, Qt.QueuedConnection)
+    hotkey_error = None
     try:
         listener.register(app)
     except HotkeyError as error:
+        hotkey_error = error
         window.show_warning(str(error))
     app.aboutToQuit.connect(listener.unregister)
+
+    # Stay in the tray until the hotkey (or tray) is used. Show the window only
+    # when there is no tray, or when the user needs to see a startup warning.
+    if tray is None or warning or hotkey_error:
+        window.show()
 
     return app.exec()
 

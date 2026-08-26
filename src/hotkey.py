@@ -1,7 +1,7 @@
-"""Global Ctrl+Shift+M hotkey using the Windows RegisterHotKey API.
+"""Global hotkey using the Windows RegisterHotKey API.
 
-RegisterHotKey reserves this one key combination. Echo never sees any other
-keystroke, so no keyboard hook or keylogging is involved.
+Echo registers only the one combination defined below. It never installs a
+keyboard hook and never sees any other keystroke.
 """
 
 from __future__ import annotations
@@ -12,15 +12,22 @@ from ctypes import wintypes
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject, Signal
 
+MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
+MOD_WIN = 0x0008
 MOD_NOREPEAT = 0x4000
-VK_M = 0x4D
 WM_HOTKEY = 0x0312
 ERROR_HOTKEY_ALREADY_REGISTERED = 1409
 
 HOTKEY_ID = 1
-HOTKEY_NAME = "Ctrl+Shift+M"
+
+# Change the global shortcut here. Echo registers this combination only.
+# Virtual-key codes: https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes
+VK_OEM_PERIOD = 0xBE  # "." on a standard US keyboard
+HOTKEY_MODIFIERS = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT
+HOTKEY_VK = VK_OEM_PERIOD
+HOTKEY_NAME = "Ctrl+Shift+."
 
 
 class HotkeyError(RuntimeError):
@@ -52,7 +59,7 @@ class HotkeyListener(QObject):
         self._registered = False
 
     def register(self, app) -> None:
-        """Claim Ctrl+Shift+M. Raises HotkeyError if it is unavailable."""
+        """Claim the configured hotkey. Raises HotkeyError if it is unavailable."""
         if sys.platform != "win32":
             raise HotkeyError("The global hotkey is only supported on Windows.")
 
@@ -69,9 +76,7 @@ class HotkeyListener(QObject):
         self._user32 = user32
 
         app.installNativeEventFilter(self._filter)
-        ok = user32.RegisterHotKey(
-            None, HOTKEY_ID, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_M
-        )
+        ok = user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MODIFIERS, HOTKEY_VK)
         if not ok:
             app.removeNativeEventFilter(self._filter)
             code = ctypes.get_last_error()

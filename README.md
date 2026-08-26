@@ -2,7 +2,7 @@
 
 Echo is a small local Windows utility for storing and copying reusable, generic response templates. It exists to make repetitive customer-service replies faster: search for a template, copy it, and paste it yourself wherever you need it.
 
-Echo is local-only. It has no network code, no accounts, no cloud sync, and no integration with any work system. It does not send messages, does not paste for you, and does not record what you copy. The only thing it touches outside its own data file is the Windows clipboard.
+Echo is local-only. It has no network code, no accounts, no cloud sync of its own, and no integration with any work system. It does not send messages, does not paste for you, and does not record what you copy. The only thing it touches outside its own data file is the Windows clipboard.
 
 ## Features
 
@@ -11,7 +11,7 @@ Echo is local-only. It has no network code, no accounts, no cloud sync, and no i
 - Copies to the clipboard without a Copy button
 - Add, edit, and delete templates in the GUI
 - Runs in the system tray so the global shortcut is always available
-- Global shortcut `Ctrl + Shift + M` opens and focuses Echo
+- Global shortcut `Ctrl + Shift + .` opens and focuses Echo
 
 ## Requirements
 
@@ -36,15 +36,15 @@ The only dependency is `PySide6`. Everything else uses the Python standard libra
 python src\main.py
 ```
 
-Echo starts with its window open and an icon in the system tray.
+Echo starts hidden in the system tray. Press `Ctrl + Shift + .` to open it.
 
 ## Keyboard workflow
 
-1. Press `Ctrl + Shift + M` anywhere in Windows to open and focus Echo.
-2. Type a search term. The search field is focused and ready immediately.
+1. Press `Ctrl + Shift + .` anywhere in Windows to open and focus Echo.
+2. Type a search term. The search field is focused and ready immediately. An empty search shows no templates.
 3. Use `Up` and `Down` to move through the matching templates.
 4. Press `Enter` to select the highlighted template.
-5. Press `Enter` again to copy it. The status line turns green and Echo hides itself.
+5. Press `Enter` again to copy it. Echo hides itself immediately.
 6. Switch to your other application and paste with `Ctrl + V`.
 
 Echo never pastes or types into another application. Copying to the clipboard is the last thing it does.
@@ -52,31 +52,39 @@ Echo never pastes or types into another application. Copying to the clipboard is
 Other shortcuts:
 
 - `Esc` — hide Echo and return to what you were doing
-- `Ctrl + N` — new template
-- `Ctrl + E` — edit the selected template
+- `Ctrl + N` — new template (same window)
+- `Ctrl + E` — edit the selected template (same window)
 - `Ctrl + D` — delete the selected template
-- `Ctrl + Enter` — save while in the template editor
+- `Ctrl + Enter` — save while editing
 
 ## Tray behaviour
 
-Closing the window does not quit Echo — it only hides it, so `Ctrl + Shift + M` keeps working. The tray icon menu has:
+Closing the window does not quit Echo — it only hides it, so `Ctrl + Shift + .` keeps working. The tray icon menu has:
 
 - **Show Echo** — open and focus the window
 - **Quit Echo** — actually shut Echo down
 
 Quitting from the tray is the only way to stop Echo completely. Left-clicking the tray icon also opens the window.
 
-If another application already owns `Ctrl + Shift + M`, Echo shows a warning in the window and keeps working from the tray icon.
+If Echo is already running, starting it again activates the existing window instead of opening a second copy.
+
+If another application already owns `Ctrl + Shift + .`, Echo shows a warning in the window and keeps working from the tray icon. To change the shortcut, edit the `HOTKEY_*` constants at the top of `src/hotkey.py`.
+
+New and Edit switch the main window into an editing view. There is no separate editor window.
 
 ## Where templates are stored
 
-Templates are stored outside the project folder, at:
+Templates are stored in the repository, at:
 
 ```
-%APPDATA%\Echo\templates.json
+data/templates.json
 ```
 
-Keeping the data there means your personal template library can never be committed to git, and it survives deleting or re-cloning the repository. `data/` is also listed in `.gitignore` as a second safeguard; if you have an older `data\templates.json` from a previous version, it is copied to the new location automatically on first run.
+That file is tracked by Git, so the template library can be synchronized between computers by committing, pushing, and pulling this repository. Echo does not talk to GitHub itself — Git is the only sync mechanism.
+
+You never need to edit the JSON by hand. Add, edit, and delete templates in the app; Echo writes the file for you.
+
+If an older Echo version stored templates at `%APPDATA%\Echo\templates.json`, that file is copied into `data/templates.json` on first run **only when** `data/templates.json` does not already exist. An existing library is never overwritten.
 
 The file looks like this:
 
@@ -92,8 +100,6 @@ The file looks like this:
   ]
 }
 ```
-
-You never need to edit it by hand — add, edit, and delete templates in the app.
 
 Saving is atomic: Echo writes a temporary file and then replaces the original, and keeps the previous version as `templates.json.bak`. If the file is ever unreadable, Echo starts with an empty list, keeps a timestamped copy of the unreadable file next to it, and shows a warning in the window rather than crashing or discarding your data.
 
@@ -118,14 +124,16 @@ python -m unittest discover tests
 
 ```
 Echo/
+├── data/
+│   └── templates.json
 ├── src/
-│   ├── main.py       startup, tray icon, wiring
-│   ├── ui.py         main window and template editor
+│   ├── main.py       startup, tray icon, single-instance, wiring
+│   ├── ui.py         main window and inline template editor
 │   ├── templates.py  template model, storage, search
 │   ├── clipboard.py  clipboard copying
-│   └── hotkey.py     global Ctrl+Shift+M via the Windows API
+│   ├── hotkey.py     global shortcut via the Windows API
+│   └── workflow.py   Enter and arrow-key selection helpers
 ├── tests/
-│   └── test_templates.py
 ├── requirements.txt
 ├── .gitignore
 └── README.md

@@ -14,10 +14,22 @@ Echo is designed as a keyboard-first tool for repetitive, generic replies.
 - Keyboard-first workflow
 - `Enter` → select, `Enter` → copy
 - Add, edit and delete templates directly in the app
-- Global hotkey: `Ctrl + Shift + .`
+- Global hotkey: `Ctrl + Shift + .` (changeable in Settings)
 - Runs in the system tray
-- Dark, minimal interface
+- Dark or light appearance, minimal interface
 - Templates can be synchronized through Git
+
+## Settings
+
+Open Settings with the gear icon in the top-right corner. It holds two things only:
+
+- **Appearance** — dark (default) or light, applied immediately.
+- **Global shortcut** — press *Change shortcut* and then your key combination.
+  If the new combination is already taken by another program, Echo says so and
+  keeps the shortcut you already had.
+
+Settings are stored per user in `%APPDATA%\Echo\settings.json`, separate from
+your templates and outside the repository.
 
 ## Requirements
 

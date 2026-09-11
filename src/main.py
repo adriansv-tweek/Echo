@@ -5,38 +5,17 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from hotkey import HOTKEY_NAME, HotkeyError, HotkeyListener
+import theme
+from hotkey import HotkeyError, HotkeyListener
+from settings import load_settings, save_settings, settings_file
 from templates import TemplateStore, data_file, legacy_appdata_file, migrate_legacy_file
 from ui import MainWindow
 
 INSTANCE_SERVER = "EchoStandaloneInstance"
-
-
-def apply_dark_palette(app: QApplication) -> None:
-    """Keep native dialogs readable against Echo's dark window."""
-    app.setStyle("Fusion")
-    app.setFont(QFont("Segoe UI", 10))
-    palette = QPalette()
-    palette.setColor(QPalette.Window, QColor("#1c1c1e"))
-    palette.setColor(QPalette.WindowText, QColor("#f4f4f5"))
-    palette.setColor(QPalette.Base, QColor("#27272a"))
-    palette.setColor(QPalette.AlternateBase, QColor("#18181b"))
-    palette.setColor(QPalette.Text, QColor("#fafafa"))
-    palette.setColor(QPalette.Button, QColor("#27272a"))
-    palette.setColor(QPalette.ButtonText, QColor("#f4f4f5"))
-    palette.setColor(QPalette.Highlight, QColor("#2563eb"))
-    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-    palette.setColor(QPalette.ToolTipBase, QColor("#27272a"))
-    palette.setColor(QPalette.ToolTipText, QColor("#fafafa"))
-    palette.setColor(QPalette.PlaceholderText, QColor("#a1a1aa"))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor("#a1a1aa"))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor("#a1a1aa"))
-    palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor("#a1a1aa"))
-    app.setPalette(palette)
 
 
 def app_icon() -> QIcon:
@@ -57,9 +36,9 @@ def app_icon() -> QIcon:
     return QIcon(pixmap)
 
 
-def build_tray(app: QApplication, window: MainWindow) -> QSystemTrayIcon:
+def build_tray(app: QApplication, window: MainWindow, shortcut_name: str) -> QSystemTrayIcon:
     tray = QSystemTrayIcon(app_icon(), app)
-    tray.setToolTip(f"Echo — {HOTKEY_NAME}")
+    tray.setToolTip(f"Echo — {shortcut_name}")
 
     menu = QMenu()
     menu.addAction("Show Echo", window.show_and_focus)
@@ -106,7 +85,10 @@ def _bind_activation(server: QLocalServer, window: MainWindow) -> None:
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Echo")
-    apply_dark_palette(app)
+
+    settings_path = settings_file()
+    settings = load_settings(settings_path)
+    theme.apply_to_app(app, settings.theme)
     app.setWindowIcon(app_icon())
 
     instance_server = _claim_instance(app)
@@ -118,7 +100,15 @@ def main() -> int:
     store = TemplateStore(path)
     warning = store.load()
 
-    window = MainWindow(store)
+    listener = HotkeyListener()
+    tray: QSystemTrayIcon | None = None
+
+    def on_settings_changed(updated) -> None:
+        save_settings(settings_path, updated)
+        if tray is not None:
+            tray.setToolTip(f"Echo — {updated.shortcut.name}")
+
+    window = MainWindow(store, settings, listener, on_settings_changed)
     _bind_activation(instance_server, window)
     if warning:
         window.show_warning(warning)
@@ -127,17 +117,17 @@ def main() -> int:
     window.hide_on_close = tray_available
     app.setQuitOnLastWindowClosed(not tray_available)
 
-    tray = build_tray(app, window) if tray_available else None
-    if tray is None:
+    if tray_available:
+        tray = build_tray(app, window, settings.shortcut.name)
+    else:
         window.show_warning(
             "The Windows system tray is unavailable, so closing this window quits Echo."
         )
 
-    listener = HotkeyListener()
     listener.activated.connect(window.show_and_focus, Qt.QueuedConnection)
     hotkey_error = None
     try:
-        listener.register(app)
+        listener.register(app, settings.shortcut)
     except HotkeyError as error:
         hotkey_error = error
         window.show_warning(str(error))

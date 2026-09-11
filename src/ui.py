@@ -1,4 +1,4 @@
-"""Main Echo window: search, preview, and inline template editing."""
+"""Main Echo window: search, preview, inline template editing, and settings."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ import ctypes
 import sys
 from ctypes import wintypes
 
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -23,11 +24,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import theme as theme_module
 from clipboard import copy_text
+from hotkey import HotkeyError, Shortcut
+from settings import Settings
 from templates import Template, TemplateStore, keywords_from_text, keywords_to_text
 from workflow import enter_action, next_result_row
 
 HINT = "Type to search. Enter selects, Enter copies, Esc hides."
+
+BROWSE_PAGE, EDIT_PAGE, SETTINGS_PAGE = 0, 1, 2
 
 
 def _bring_to_front(window: QMainWindow) -> None:
@@ -63,154 +69,88 @@ def _bring_to_front(window: QMainWindow) -> None:
         user32.AttachThreadInput(current_thread, foreground_thread, False)
 
 
-STYLESHEET = """
-* {
-    font-family: "Segoe UI", "Segoe UI Variable Text", sans-serif;
-}
-QMainWindow, QWidget#central, QWidget#browsePage, QWidget#editPage {
-    background: #1c1c1e;
-    color: #f4f4f5;
-}
-QLineEdit, QPlainTextEdit {
-    background: #27272a;
-    color: #fafafa;
-    border: 1px solid #3f3f46;
-    border-radius: 4px;
-    padding: 8px 10px;
-    selection-background-color: #2563eb;
-    selection-color: #ffffff;
-}
-QLineEdit#search {
-    padding: 10px 12px;
-    font-size: 15px;
-}
-QLineEdit::placeholder, QPlainTextEdit::placeholder {
-    color: #a1a1aa;
-}
-QListWidget {
-    background: #27272a;
-    color: #f4f4f5;
-    border: 1px solid #3f3f46;
-    border-radius: 4px;
-    padding: 4px;
-    outline: none;
-}
-QListWidget::item {
-    padding: 7px 10px;
-    border-radius: 3px;
-    color: #f4f4f5;
-}
-QListWidget::item:selected {
-    background: #2563eb;
-    color: #ffffff;
-}
-QListWidget::item:hover:!selected {
-    background: #3f3f46;
-}
-QPlainTextEdit#preview, QPlainTextEdit#editText {
-    font-size: 13px;
-    line-height: 1.4;
-}
-QLabel {
-    color: #f4f4f5;
-    background: transparent;
-}
-QLabel#previewTitle, QLabel#editHeading {
-    font-size: 13px;
-    font-weight: 600;
-    color: #fafafa;
-}
-QLabel#fieldLabel {
-    font-size: 12px;
-    color: #d4d4d8;
-}
-QLabel#warning {
-    padding: 8px 10px;
-    border-radius: 4px;
-    background: #713f12;
-    color: #fde68a;
-}
-QLabel#status {
-    padding: 6px 2px;
-    color: #d4d4d8;
-    font-size: 12px;
-}
-QLabel#status[state="copied"] {
-    color: #86efac;
-}
-QLabel#status[state="error"] {
-    color: #fca5a5;
-}
-QPushButton {
-    padding: 6px 12px;
-    border: 1px solid #52525b;
-    border-radius: 4px;
-    background: #27272a;
-    color: #f4f4f5;
-}
-QPushButton:hover {
-    background: #3f3f46;
-}
-QPushButton:pressed {
-    background: #18181b;
-}
-QPushButton:disabled {
-    color: #71717a;
-    border-color: #3f3f46;
-    background: #27272a;
-}
-QPushButton#iconButton {
-    padding: 0;
-    min-width: 28px;
-    max-width: 28px;
-    min-height: 28px;
-    max-height: 28px;
-    font-size: 14px;
-    border: none;
-    background: transparent;
-    color: #d4d4d8;
-}
-QPushButton#iconButton:hover {
-    background: #3f3f46;
-    color: #fafafa;
-}
-QPushButton#iconButton:disabled {
-    background: transparent;
-    color: #52525b;
-}
-QPushButton#primary {
-    background: #2563eb;
-    border-color: #2563eb;
-    color: #ffffff;
-}
-QPushButton#primary:hover {
-    background: #3b82f6;
-}
-QPushButton#primary:disabled {
-    background: #1e3a8a;
-    border-color: #1e3a8a;
-    color: #93c5fd;
-}
-QScrollBar:vertical {
-    background: #1c1c1e;
-    width: 10px;
-    margin: 0;
-}
-QScrollBar::handle:vertical {
-    background: #52525b;
-    min-height: 24px;
-    border-radius: 4px;
-}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0;
-}
-"""
+class ShortcutCaptureButton(QPushButton):
+    """Button that listens for one modifier + key combination when activated."""
+
+    captured = Signal(object)
+    cancelled = Signal()
+
+    IDLE_TEXT = "Change shortcut"
+    PROMPT = "Press your desired shortcut…"
+
+    MODIFIERS = (
+        (Qt.ControlModifier, "ctrl"),
+        (Qt.AltModifier, "alt"),
+        (Qt.ShiftModifier, "shift"),
+        (Qt.MetaModifier, "win"),
+    )
+    BARE_KEYS = (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta, Qt.Key_AltGr)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(self.IDLE_TEXT, parent)
+        self.capturing = False
+        self.clicked.connect(self.start_capture)
+
+    def start_capture(self) -> None:
+        self.capturing = True
+        self.setText(self.PROMPT)
+        self.setFocus()
+
+    def stop_capture(self) -> None:
+        self.capturing = False
+        self.setText(self.IDLE_TEXT)
+
+    def event(self, incoming):
+        # Let the combination reach keyPressEvent instead of firing Echo's own
+        # Ctrl+N / Ctrl+E / Escape shortcuts while capturing.
+        if self.capturing and incoming.type() == QEvent.ShortcutOverride:
+            incoming.accept()
+            return True
+        return super().event(incoming)
+
+    def keyPressEvent(self, event) -> None:
+        if not self.capturing:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        if key in self.BARE_KEYS:
+            return
+        if key == Qt.Key_Escape:
+            self.stop_capture()
+            self.cancelled.emit()
+            return
+
+        modifiers = tuple(
+            name for flag, name in self.MODIFIERS if event.modifiers() & flag
+        )
+        if not modifiers:
+            self.setText("Add a modifier, e.g. Ctrl+Shift+…")
+            return
+
+        virtual_key = event.nativeVirtualKey()
+        label = QKeySequence(key).toString()
+        if not virtual_key or not label:
+            self.setText("That key cannot be used. Try another…")
+            return
+
+        self.stop_capture()
+        self.captured.emit(Shortcut(modifiers, label, int(virtual_key)))
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, store: TemplateStore) -> None:
+    def __init__(
+        self,
+        store: TemplateStore,
+        settings: Settings | None = None,
+        hotkey=None,
+        on_settings_changed=None,
+    ) -> None:
         super().__init__()
         self.store = store
+        self.settings = settings or Settings()
+        self.hotkey = hotkey
+        self.on_settings_changed = on_settings_changed
         self.hide_on_close = True
         self._armed = False
         self._mode = "browse"
@@ -228,6 +168,7 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_browse_page())
         self.pages.addWidget(self._build_edit_page())
+        self.pages.addWidget(self._build_settings_page())
 
         central = QWidget()
         central.setObjectName("central")
@@ -236,7 +177,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         layout.addWidget(self.pages)
         self.setCentralWidget(central)
-        self.setStyleSheet(STYLESHEET)
+        self.apply_theme(self.settings.theme)
 
         QShortcut(QKeySequence("Ctrl+N"), self, self.add_template)
         QShortcut(QKeySequence("Ctrl+E"), self, self.edit_template)
@@ -255,6 +196,17 @@ class MainWindow(QMainWindow):
         self.warning.setObjectName("warning")
         self.warning.setWordWrap(True)
         self.warning.hide()
+
+        self.settings_button = QPushButton("⚙")
+        self.settings_button.setObjectName("iconButton")
+        self.settings_button.setToolTip("Settings")
+        self.settings_button.setAccessibleName("Settings")
+        self.settings_button.clicked.connect(self.open_settings)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addStretch()
+        header.addWidget(self.settings_button)
 
         self.search = QLineEdit()
         self.search.setObjectName("search")
@@ -303,6 +255,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
+        layout.addLayout(header)
         layout.addWidget(self.warning)
         layout.addWidget(self.search)
         layout.addWidget(self.results, 1)
@@ -364,11 +317,148 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.edit_status)
         return page
 
+    def _build_settings_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("settingsPage")
+
+        heading = QLabel("Settings")
+        heading.setObjectName("settingsHeading")
+
+        appearance_label = QLabel("Appearance")
+        appearance_label.setObjectName("fieldLabel")
+        self.dark_button = QPushButton("Dark")
+        self.light_button = QPushButton("Light")
+        for button, name in ((self.dark_button, theme_module.DARK),
+                             (self.light_button, theme_module.LIGHT)):
+            button.setObjectName("themeOption")
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
+            button.clicked.connect(lambda _checked=False, n=name: self.set_theme(n))
+
+        appearance_row = QHBoxLayout()
+        appearance_row.setContentsMargins(0, 0, 0, 0)
+        appearance_row.addWidget(self.dark_button)
+        appearance_row.addWidget(self.light_button)
+        appearance_row.addStretch()
+
+        shortcut_label = QLabel("Global shortcut")
+        shortcut_label.setObjectName("fieldLabel")
+        self.shortcut_value = QLabel(self.settings.shortcut.name)
+        self.shortcut_value.setObjectName("shortcutValue")
+
+        self.capture_button = ShortcutCaptureButton()
+        self.capture_button.captured.connect(self._on_shortcut_captured)
+        self.capture_button.cancelled.connect(
+            lambda: self._set_settings_status("Shortcut unchanged.")
+        )
+
+        shortcut_row = QHBoxLayout()
+        shortcut_row.setContentsMargins(0, 0, 0, 0)
+        shortcut_row.addWidget(self.capture_button)
+        shortcut_row.addStretch()
+
+        self.settings_status = QLabel("")
+        self.settings_status.setObjectName("status")
+
+        self.settings_back_button = QPushButton("Back")
+        self.settings_back_button.clicked.connect(self.close_settings)
+
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.addWidget(self.settings_back_button)
+        footer.addStretch()
+
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(heading)
+        layout.addSpacing(6)
+        layout.addWidget(appearance_label)
+        layout.addLayout(appearance_row)
+        layout.addSpacing(10)
+        layout.addWidget(shortcut_label)
+        layout.addWidget(self.shortcut_value)
+        layout.addLayout(shortcut_row)
+        layout.addStretch()
+        layout.addWidget(self.settings_status)
+        layout.addLayout(footer)
+        return page
+
+    # --- settings -----------------------------------------------------------
+
+    def open_settings(self) -> None:
+        if self._mode == "edit":
+            return
+        self._mode = "settings"
+        self.setWindowTitle("Echo — Settings")
+        self._sync_settings_page()
+        self._set_settings_status("")
+        self.pages.setCurrentIndex(SETTINGS_PAGE)
+        self.capture_button.setFocus()
+
+    def close_settings(self) -> None:
+        self.capture_button.stop_capture()
+        self._mode = "browse"
+        self.setWindowTitle("Echo")
+        self.pages.setCurrentIndex(BROWSE_PAGE)
+        self.search.setFocus()
+
+    def apply_theme(self, name: str) -> None:
+        name = theme_module.normalise(name)
+        self.setStyleSheet(theme_module.stylesheet(name))
+        app = QApplication.instance()
+        if app is not None:
+            theme_module.apply_to_app(app, name)
+
+    def set_theme(self, name: str) -> None:
+        name = theme_module.normalise(name)
+        self.settings = self.settings.with_theme(name)
+        self.apply_theme(name)
+        self._sync_settings_page()
+        self._persist_settings()
+        self._set_settings_status(f"{name.capitalize()} appearance applied.")
+
+    def _sync_settings_page(self) -> None:
+        self.dark_button.setChecked(self.settings.theme == theme_module.DARK)
+        self.light_button.setChecked(self.settings.theme == theme_module.LIGHT)
+        self.shortcut_value.setText(self.settings.shortcut.name)
+
+    def _on_shortcut_captured(self, shortcut: Shortcut) -> None:
+        """Activate a new shortcut, keeping the old one if registration fails."""
+        if self.hotkey is not None:
+            try:
+                self.hotkey.rebind(shortcut)
+            except HotkeyError as error:
+                self._set_settings_status(str(error), "error")
+                self._sync_settings_page()
+                return
+
+        self.settings = self.settings.with_shortcut(shortcut)
+        self._sync_settings_page()
+        self._persist_settings()
+        self._set_settings_status(f"Global shortcut is now {shortcut.name}.", "copied")
+
+    def _persist_settings(self) -> None:
+        if self.on_settings_changed is None:
+            return
+        try:
+            self.on_settings_changed(self.settings)
+        except OSError as error:
+            self._set_settings_status(f"Could not save settings: {error}", "error")
+
+    def _set_settings_status(self, message: str, state: str = "") -> None:
+        self.settings_status.setText(message)
+        self._apply_status_state(self.settings_status, state)
+
+    # --- window -------------------------------------------------------------
+
     def closeEvent(self, event) -> None:
         """With a tray icon present, closing only hides; Echo keeps running."""
         if self._mode == "edit" and not self._confirm_leave_edit():
             event.ignore()
             return
+        if self._mode == "settings":
+            self.close_settings()
         if self.hide_on_close:
             event.ignore()
             self.hide()
@@ -424,6 +514,9 @@ class MainWindow(QMainWindow):
             self.title_edit.setFocus()
             self.title_edit.selectAll()
             return
+        if self._mode == "settings":
+            self.capture_button.setFocus()
+            return
         self._armed = False
         self._clear_status()
         self.search.clear()
@@ -435,7 +528,7 @@ class MainWindow(QMainWindow):
         self._enter_edit(None)
 
     def edit_template(self) -> None:
-        if self._mode == "edit":
+        if self._mode != "browse":
             return
         template = self._current_template()
         if template is None:
@@ -443,7 +536,7 @@ class MainWindow(QMainWindow):
         self._enter_edit(template)
 
     def delete_template(self) -> None:
-        if self._mode == "edit":
+        if self._mode != "browse":
             return
         template = self._current_template()
         if template is None:
@@ -474,7 +567,7 @@ class MainWindow(QMainWindow):
         self._edit_original = self._edit_values()
         self.edit_status.setText("Ctrl+Enter saves. Esc cancels.")
         self.edit_status.setProperty("state", "")
-        self.pages.setCurrentIndex(1)
+        self.pages.setCurrentIndex(EDIT_PAGE)
         self.title_edit.setFocus()
 
     def _leave_edit(self) -> None:
@@ -482,7 +575,7 @@ class MainWindow(QMainWindow):
         self._edit_id = None
         self._edit_original = ("", "", "")
         self.setWindowTitle("Echo")
-        self.pages.setCurrentIndex(0)
+        self.pages.setCurrentIndex(BROWSE_PAGE)
         self.search.setFocus()
 
     def _edit_values(self) -> tuple[str, str, str]:
@@ -549,6 +642,9 @@ class MainWindow(QMainWindow):
     def _on_escape(self) -> None:
         if self._mode == "edit":
             self._cancel_edit()
+            return
+        if self._mode == "settings":
+            self.close_settings()
             return
         self.hide()
 

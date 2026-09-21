@@ -298,7 +298,7 @@ class TemplateStoreTest(unittest.TestCase):
             else:
                 os.environ["APPDATA"] = original
 
-    def test_frozen_first_launch_copies_seed_to_appdata(self) -> None:
+    def test_frozen_first_launch_creates_empty_library_without_seed(self) -> None:
         bundle = Path(tempfile.mkdtemp())
         seed = bundle / "data" / "templates.json"
         seed.parent.mkdir(parents=True)
@@ -317,12 +317,23 @@ class TemplateStoreTest(unittest.TestCase):
             dest = data_file()
             self.assertEqual(dest, target)
             self.assertTrue(ensure_packaged_templates(dest))
+            store = TemplateStore(dest)
+            self.assertIsNone(store.load())
+            self.assertEqual(store.templates, [])
 
-        self.assertTrue(target.exists())
-        self.assertIn("Seed", target.read_text(encoding="utf-8"))
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        self.assertEqual(payload, {"templates": []})
         self.assertIn("Seed", seed.read_text(encoding="utf-8"))
+        self.assertNotIn("Seed", target.read_text(encoding="utf-8"))
 
-    def test_frozen_second_launch_keeps_existing_appdata_library(self) -> None:
+    def test_frozen_existing_appdata_library_is_kept_and_loaded(self) -> None:
+        original = (
+            '{"templates": [{"id": "a1", "title": "Mine", "keywords": [], "text": "keep"}]}'
+        )
+        appdata = Path(tempfile.mkdtemp())
+        target = appdata / "Echo" / "templates.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(original, encoding="utf-8")
         bundle = Path(tempfile.mkdtemp())
         seed = bundle / "data" / "templates.json"
         seed.parent.mkdir(parents=True)
@@ -330,21 +341,41 @@ class TemplateStoreTest(unittest.TestCase):
             '{"templates": [{"id": "1", "title": "Seed", "text": "x"}]}',
             encoding="utf-8",
         )
-        appdata = Path(tempfile.mkdtemp())
-        target = appdata / "Echo" / "templates.json"
-        target.parent.mkdir(parents=True)
-        target.write_text('{"templates": []}', encoding="utf-8")
 
         with (
             patch("templates.sys.frozen", True, create=True),
             patch("templates.sys._MEIPASS", str(bundle), create=True),
             patch.dict(os.environ, {"APPDATA": str(appdata)}),
         ):
-            self.assertFalse(ensure_packaged_templates(data_file()))
+            dest = data_file()
+            self.assertFalse(ensure_packaged_templates(dest))
+            store = TemplateStore(dest)
+            self.assertIsNone(store.load())
+            self.assertEqual([t.title for t in store.templates], ["Mine"])
 
-        self.assertEqual(target.read_text(encoding="utf-8"), '{"templates": []}')
+        self.assertEqual(target.read_text(encoding="utf-8"), original)
 
-    def test_frozen_seed_is_not_copied_into_the_bundle(self) -> None:
+    def test_frozen_user_created_templates_persist(self) -> None:
+        appdata = Path(tempfile.mkdtemp())
+        with (
+            patch("templates.sys.frozen", True, create=True),
+            patch.dict(os.environ, {"APPDATA": str(appdata)}),
+        ):
+            dest = data_file()
+            self.assertTrue(ensure_packaged_templates(dest))
+            store = TemplateStore(dest)
+            store.load()
+            store.add("Personal", ["mine"], "only on this PC")
+
+            reloaded = TemplateStore(dest)
+            self.assertIsNone(reloaded.load())
+            self.assertEqual(len(reloaded.templates), 1)
+            self.assertEqual(reloaded.templates[0].title, "Personal")
+            self.assertEqual(reloaded.templates[0].text, "only on this PC")
+
+        self.assertTrue((appdata / "Echo" / "templates.json").exists())
+
+    def test_frozen_empty_library_is_not_written_into_the_bundle(self) -> None:
         bundle = Path(tempfile.mkdtemp())
         seed = bundle / "data" / "templates.json"
         seed.parent.mkdir(parents=True)
@@ -356,6 +387,8 @@ class TemplateStoreTest(unittest.TestCase):
         ):
             self.assertFalse(ensure_packaged_templates(seed))
             self.assertFalse(ensure_packaged_templates(bundle / "data" / "user.json"))
+        self.assertEqual(seed.read_text(encoding="utf-8"), "{}")
+        self.assertFalse((bundle / "data" / "user.json").exists())
 
 
 if __name__ == "__main__":

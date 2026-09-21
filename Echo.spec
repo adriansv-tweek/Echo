@@ -5,7 +5,6 @@ from pathlib import Path
 
 project = Path(SPEC).resolve().parent
 src = project / "src"
-seed = project / "data" / "templates.json"
 
 # Echo only uses Qt Widgets/Gui/Core/Network. Keep those; drop heavy Addons.
 _UNUSED_QT = [
@@ -60,7 +59,7 @@ a = Analysis(
     [str(src / "main.py")],
     pathex=[str(src)],
     binaries=[],
-    datas=[(str(seed), "data")],
+    datas=[],
     hiddenimports=[],
     hookspath=[str(project / "hooks")],
     hooksconfig={},

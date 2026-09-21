@@ -5,6 +5,10 @@ templates.*.json
 *.dmp
 *.stackdump
 
+# Packaging output
+build/
+dist/
+
 # Python
 .venv/
 venv/

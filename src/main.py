@@ -12,7 +12,13 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 import theme
 from hotkey import HotkeyError, HotkeyListener
 from settings import load_settings, save_settings, settings_file
-from templates import TemplateStore, data_file, legacy_appdata_file, migrate_legacy_file
+from templates import (
+    TemplateStore,
+    data_file,
+    ensure_packaged_templates,
+    legacy_appdata_file,
+    migrate_legacy_file,
+)
 from ui import MainWindow
 
 INSTANCE_SERVER = "EchoStandaloneInstance"
@@ -96,6 +102,7 @@ def main() -> int:
         return 0
 
     path = data_file()
+    ensure_packaged_templates(path)
     migrate_legacy_file(legacy_appdata_file(), path)
     store = TemplateStore(path)
     warning = store.load()

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from templates import (  # noqa: E402
     TemplateStore,
     data_file,
+    ensure_packaged_templates,
     keywords_from_text,
     legacy_appdata_file,
     migrate_legacy_file,
@@ -278,6 +279,83 @@ class TemplateStoreTest(unittest.TestCase):
         path = self.dir / "templates.json"
         path.write_text("{}", encoding="utf-8")
         self.assertFalse(migrate_legacy_file(path, path))
+
+    def test_ensure_packaged_templates_is_noop_when_not_frozen(self) -> None:
+        target = self.dir / "Echo" / "templates.json"
+        self.assertFalse(ensure_packaged_templates(target))
+        self.assertFalse(target.exists())
+
+    def test_frozen_data_file_uses_appdata(self) -> None:
+        original = os.environ.get("APPDATA")
+        os.environ["APPDATA"] = r"C:\FakeAppData"
+        try:
+            with patch("templates.sys.frozen", True, create=True):
+                path = data_file()
+            self.assertEqual(path, Path(r"C:\FakeAppData") / "Echo" / "templates.json")
+        finally:
+            if original is None:
+                os.environ.pop("APPDATA", None)
+            else:
+                os.environ["APPDATA"] = original
+
+    def test_frozen_first_launch_copies_seed_to_appdata(self) -> None:
+        bundle = Path(tempfile.mkdtemp())
+        seed = bundle / "data" / "templates.json"
+        seed.parent.mkdir(parents=True)
+        seed.write_text(
+            '{"templates": [{"id": "1", "title": "Seed", "text": "x"}]}',
+            encoding="utf-8",
+        )
+        appdata = Path(tempfile.mkdtemp())
+        target = appdata / "Echo" / "templates.json"
+
+        with (
+            patch("templates.sys.frozen", True, create=True),
+            patch("templates.sys._MEIPASS", str(bundle), create=True),
+            patch.dict(os.environ, {"APPDATA": str(appdata)}),
+        ):
+            dest = data_file()
+            self.assertEqual(dest, target)
+            self.assertTrue(ensure_packaged_templates(dest))
+
+        self.assertTrue(target.exists())
+        self.assertIn("Seed", target.read_text(encoding="utf-8"))
+        self.assertIn("Seed", seed.read_text(encoding="utf-8"))
+
+    def test_frozen_second_launch_keeps_existing_appdata_library(self) -> None:
+        bundle = Path(tempfile.mkdtemp())
+        seed = bundle / "data" / "templates.json"
+        seed.parent.mkdir(parents=True)
+        seed.write_text(
+            '{"templates": [{"id": "1", "title": "Seed", "text": "x"}]}',
+            encoding="utf-8",
+        )
+        appdata = Path(tempfile.mkdtemp())
+        target = appdata / "Echo" / "templates.json"
+        target.parent.mkdir(parents=True)
+        target.write_text('{"templates": []}', encoding="utf-8")
+
+        with (
+            patch("templates.sys.frozen", True, create=True),
+            patch("templates.sys._MEIPASS", str(bundle), create=True),
+            patch.dict(os.environ, {"APPDATA": str(appdata)}),
+        ):
+            self.assertFalse(ensure_packaged_templates(data_file()))
+
+        self.assertEqual(target.read_text(encoding="utf-8"), '{"templates": []}')
+
+    def test_frozen_seed_is_not_copied_into_the_bundle(self) -> None:
+        bundle = Path(tempfile.mkdtemp())
+        seed = bundle / "data" / "templates.json"
+        seed.parent.mkdir(parents=True)
+        seed.write_text("{}", encoding="utf-8")
+
+        with (
+            patch("templates.sys.frozen", True, create=True),
+            patch("templates.sys._MEIPASS", str(bundle), create=True),
+        ):
+            self.assertFalse(ensure_packaged_templates(seed))
+            self.assertFalse(ensure_packaged_templates(bundle / "data" / "user.json"))
 
 
 if __name__ == "__main__":

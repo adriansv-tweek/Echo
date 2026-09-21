@@ -10,7 +10,7 @@
       "id": "1db4871a",
       "title": "Kvalitet",
       "keywords": [],
-      "text": "Hei, \n\nTakk for din henvendelse. \n\nVi beklager for at du har mottatt en bestilling som ikke holder mål. Dette er uheldig, men skal ikke skje. \n\nDette ønsker vi selvfølgelig å få rettet opp i. \n\nØnsker du refusjon tilbake til ditt bankkort, eller refusjon direkte til din Trumf-bonus? \n\nMerk at refusjon til bankkort tar 2-5 virkedager, mens innsettelse til Trumf-bonus tar et par minutter før det er synlig for deg. \n\nVi hører fra deg!"
+      "text": "Hei, \n\nTakk for din henvendelse. \n\nVi beklager for at du har mottatt en bestilling som ikke holder mål. Dette er uheldig, og skal ikke skje.  \n\nDette ønsker vi selvfølgelig å få rettet opp i. \n\nØnsker du refusjon tilbake til ditt bankkort, eller refusjon direkte til din Trumf-bonus? \n\nMerk at refusjon til bankkort tar 2-5 virkedager, mens innsettelse til Trumf-bonus tar et par minutter før det er synlig for deg. \n\nVi hører fra deg!"
     },
     {
       "id": "0f692092",
@@ -100,7 +100,7 @@
       "id": "113cf98d",
       "title": "Feil vare",
       "keywords": [],
-      "text": "Hei, \n\nTakk for din henvendelse. \n\nVi beklager for at du har mottatt feil vare ved din bestilling. Dette er uheldig, men skal ikke skje. \n\nDette skal vi selvsagt refundere deg for. Ønsker du refusjon tilbake til din Trumf-bonus, eller tilbake til ditt bankkort? \n\nMerk at bankkort tar 2-5 virkedager før pengene er disponible, mens Trumf-bonus tar det et par sekunder. \n\nVi hører fra deg! "
+      "text": "Hei, \n\nTakk for din henvendelse. \n\nVi beklager for at du har mottatt feil vare ved din bestilling. Dette er uheldig, og skal ikke skje.  \n\nDette skal vi selvsagt refundere deg for. Ønsker du refusjon tilbake til din Trumf-bonus, eller tilbake til ditt bankkort? \n\nMerk at bankkort tar 2-5 virkedager før pengene er disponible, mens Trumf-bonus tar det et par sekunder. \n\nVi hører fra deg! "
     },
     {
       "id": "f6e06ed4",
@@ -117,6 +117,51 @@
       "title": "Kansellert SMS",
       "keywords": [],
       "text": "Hei!\n \nVi har nettopp vært i dialog med MENY XXX, de informerer oss om at de dessverre ikke har varen som du har bestilt inne.\n \nVi blir derfor nødt til å kansellere din bestilling.\n \nBeklager så mye for ulempen dette medfører.\n \nTa gjerne kontakt med oss dersom du har noen spørsmål rundt dette, vi kan nåes på telefon: 22 56 35 00.\n \nMed vennlig hilsen \nMENY Kundeservice"
+    },
+    {
+      "id": "b8c538a1",
+      "title": "Oppklaring",
+      "keywords": [],
+      "text": "Håper dette oppklarte for deg, \n\nØnsker deg en ellers fin dag videre! "
+    },
+    {
+      "id": "2773c661",
+      "title": "Kategoriansvarlig",
+      "keywords": [],
+      "text": "Hei, \n\nTakk for din henvendelse. \n\nVi har tatt med saken videre til vår kategoriansvarlig og avventer svar ifra de. \n\nDu får oppfølging ifra oss så snart vi hører ifra de. \n\nØnsker deg en fin dag videre!"
+    },
+    {
+      "id": "63295220",
+      "title": "Kvantumsrabattfeil",
+      "keywords": [],
+      "text": "Hei,\n\nTakk for din henvendelse.\n\nDet er en visuell feil i nettbutikken som gjør at kvantumsrabatter ikke går inn i kassen, og gjør at reserverte beløp blir for høye.\n\nVi har meldt saken til teknisk avdeling, og de jobber på spreng for å få fikset opp i dette.\n\nMerk at dette går ikke ut over den endelige betalingen, systemet registrerer rabatten når varene plukkes, og det reserverte beløpet korrigeres dagen du får varene. \n\nDet vil i utgangspunktet si at det reserverte beløpet blir høyere, men du betaler riktig pris, og resterende mellomlegg kommer tilbake til deg i etterkant.\n\nHåper dette oppklarte,\n\nØnsker deg en ellers fin dag videre!"
+    },
+    {
+      "id": "02c7f21a",
+      "title": "Trumf-Kundenummer",
+      "keywords": [
+        "trumf",
+        "Kundenummer"
+      ],
+      "text": "Hei, \n\nTakk for din henvendelse. \n\nDette ønsker vi veldig gjerne å undersøke for deg. Har du mulighet til å dele ditt Trumf-kundenummer? \n\nVi hører fra deg! "
+    },
+    {
+      "id": "17acad39",
+      "title": "hei",
+      "keywords": [
+        "takk",
+        "henvendelse"
+      ],
+      "text": "Hei, \n\nTakk for din henvendelse."
+    },
+    {
+      "id": "b6145cbe",
+      "title": "Ønsker",
+      "keywords": [
+        "fin",
+        "dag"
+      ],
+      "text": "Ønsker deg en fin dag videre! "
     }
   ]
 }

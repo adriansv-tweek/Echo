@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -15,13 +16,63 @@ FILE_NAME = "templates.json"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def data_file() -> Path:
-    """Templates live in the repository so the library can be synced with Git."""
+def _frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _bundle_root() -> Path:
+    """PyInstaller extract/bundle dir. Never use this as the writable library."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass)
+    return Path(sys.executable).resolve().parent
+
+
+def seed_templates_file() -> Path:
+    """Read-only seed copy: repo file in source, bundled data/ in a freeze."""
+    if _frozen():
+        return _bundle_root() / "data" / FILE_NAME
     return PROJECT_ROOT / "data" / FILE_NAME
 
 
+def data_file() -> Path:
+    """Writable template library.
+
+    Source: repository data/templates.json so the library can be synced with Git.
+    Frozen: %APPDATA%\\Echo\\templates.json, never the PyInstaller bundle.
+    """
+    if _frozen():
+        return legacy_appdata_file()
+    return PROJECT_ROOT / "data" / FILE_NAME
+
+
+def ensure_packaged_templates(target: Path) -> bool:
+    """Copy bundled seed to AppData on first frozen launch. No-op in source mode.
+
+    Never overwrites an existing user library and never writes into _MEIPASS.
+    """
+    if not _frozen() or target.exists():
+        return False
+    seed = seed_templates_file()
+    if not seed.exists():
+        return False
+    try:
+        target_resolved = target.resolve()
+        seed_resolved = seed.resolve()
+        if target_resolved == seed_resolved:
+            return False
+        bundle = _bundle_root().resolve()
+        if target_resolved == bundle or bundle in target_resolved.parents:
+            return False
+    except OSError:
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(seed, target)
+    return True
+
+
 def legacy_appdata_file() -> Path:
-    """Previous storage location from an older Echo version."""
+    """User AppData library (frozen builds) and older Echo source location."""
     appdata = os.environ.get("APPDATA")
     base = Path(appdata) if appdata else Path.home() / ".config"
     return base / APP_NAME / FILE_NAME

@@ -298,7 +298,7 @@ class TemplateStoreTest(unittest.TestCase):
             else:
                 os.environ["APPDATA"] = original
 
-    def test_frozen_first_launch_creates_empty_library_without_seed(self) -> None:
+    def test_frozen_first_launch_copies_seed_to_appdata(self) -> None:
         bundle = Path(tempfile.mkdtemp())
         seed = bundle / "data" / "templates.json"
         seed.parent.mkdir(parents=True)
@@ -319,12 +319,31 @@ class TemplateStoreTest(unittest.TestCase):
             self.assertTrue(ensure_packaged_templates(dest))
             store = TemplateStore(dest)
             self.assertIsNone(store.load())
+            self.assertEqual([t.title for t in store.templates], ["Seed"])
+
+        self.assertIn("Seed", target.read_text(encoding="utf-8"))
+        self.assertIn("Seed", seed.read_text(encoding="utf-8"))
+
+    def test_frozen_empty_seed_gives_new_users_zero_templates(self) -> None:
+        bundle = Path(tempfile.mkdtemp())
+        seed = bundle / "data" / "templates.json"
+        seed.parent.mkdir(parents=True)
+        seed.write_text('{\n  "templates": []\n}\n', encoding="utf-8")
+        appdata = Path(tempfile.mkdtemp())
+        target = appdata / "Echo" / "templates.json"
+
+        with (
+            patch("templates.sys.frozen", True, create=True),
+            patch("templates.sys._MEIPASS", str(bundle), create=True),
+            patch.dict(os.environ, {"APPDATA": str(appdata)}),
+        ):
+            dest = data_file()
+            self.assertTrue(ensure_packaged_templates(dest))
+            store = TemplateStore(dest)
+            self.assertIsNone(store.load())
             self.assertEqual(store.templates, [])
 
-        payload = json.loads(target.read_text(encoding="utf-8"))
-        self.assertEqual(payload, {"templates": []})
-        self.assertIn("Seed", seed.read_text(encoding="utf-8"))
-        self.assertNotIn("Seed", target.read_text(encoding="utf-8"))
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"templates": []})
 
     def test_frozen_existing_appdata_library_is_kept_and_loaded(self) -> None:
         original = (
@@ -356,9 +375,15 @@ class TemplateStoreTest(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), original)
 
     def test_frozen_user_created_templates_persist(self) -> None:
+        bundle = Path(tempfile.mkdtemp())
+        seed = bundle / "data" / "templates.json"
+        seed.parent.mkdir(parents=True)
+        seed.write_text('{"templates": []}', encoding="utf-8")
         appdata = Path(tempfile.mkdtemp())
+
         with (
             patch("templates.sys.frozen", True, create=True),
+            patch("templates.sys._MEIPASS", str(bundle), create=True),
             patch.dict(os.environ, {"APPDATA": str(appdata)}),
         ):
             dest = data_file()
@@ -375,7 +400,7 @@ class TemplateStoreTest(unittest.TestCase):
 
         self.assertTrue((appdata / "Echo" / "templates.json").exists())
 
-    def test_frozen_empty_library_is_not_written_into_the_bundle(self) -> None:
+    def test_frozen_seed_is_not_copied_into_the_bundle(self) -> None:
         bundle = Path(tempfile.mkdtemp())
         seed = bundle / "data" / "templates.json"
         seed.parent.mkdir(parents=True)

@@ -3,17 +3,15 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 set "ROOT=%CD%"
-set "PYTHONW=%ROOT%\.venv\Scripts\pythonw.exe"
+set "ECHO_EXE=%ROOT%\dist\Echo\Echo.exe"
+set "ECHO_DIR=%ROOT%\dist\Echo"
 set "SHORTCUT=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Echo.lnk"
 
-if not exist "%PYTHONW%" (
-  echo Echo virtual environment not found at:
-  echo   %PYTHONW%
+if not exist "%ECHO_EXE%" (
+  echo Packaged Echo was not found at:
+  echo   %ECHO_EXE%
   echo.
-  echo Create it first:
-  echo   python -m venv .venv
-  echo   .venv\Scripts\activate
-  echo   pip install -r requirements.txt
+  echo Build it first with build_echo.bat, then run this again.
   echo.
   pause
   exit /b 1
@@ -23,9 +21,9 @@ REM Creates a Start Menu shortcut only. Does not add Echo to Windows Startup.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ws = New-Object -ComObject WScript.Shell;" ^
   "$s = $ws.CreateShortcut('%SHORTCUT%');" ^
-  "$s.TargetPath = '%PYTHONW%';" ^
-  "$s.Arguments = 'src\main.py';" ^
-  "$s.WorkingDirectory = '%ROOT%';" ^
+  "$s.TargetPath = '%ECHO_EXE%';" ^
+  "$s.Arguments = '';" ^
+  "$s.WorkingDirectory = '%ECHO_DIR%';" ^
   "$s.WindowStyle = 1;" ^
   "$s.Description = 'Echo template helper';" ^
   "$s.Save();" ^

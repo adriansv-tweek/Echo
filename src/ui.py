@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import ctypes
-import sys
-from ctypes import wintypes
-
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -27,46 +23,26 @@ from PySide6.QtWidgets import (
 import theme as theme_module
 from clipboard import copy_text
 from hotkey import HotkeyError, Shortcut
+from paste import (
+    PASTE_RETRIES,
+    PASTE_RETRY_MS,
+    focus_window,
+    foreground_window,
+    send_ctrl_v,
+)
 from settings import Settings
 from templates import Template, TemplateStore, keywords_from_text, keywords_to_text
 from workflow import enter_action, next_result_row
 
 HINT = "Type to search. Enter selects, Enter copies, Esc hides."
+LIBRARY_HINT = "All templates. Enter selects, Enter copies, Esc returns."
 
 BROWSE_PAGE, EDIT_PAGE, SETTINGS_PAGE = 0, 1, 2
 
 
 def _bring_to_front(window: QMainWindow) -> None:
     """Ask Windows to actually focus Echo after the global hotkey."""
-    if sys.platform != "win32":
-        return
-
-    user32 = ctypes.WinDLL("user32")
-    kernel32 = ctypes.WinDLL("kernel32")
-
-    user32.GetForegroundWindow.argtypes = ()
-    user32.GetForegroundWindow.restype = wintypes.HWND
-    user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
-    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
-    user32.AttachThreadInput.argtypes = (wintypes.DWORD, wintypes.DWORD, wintypes.BOOL)
-    user32.AttachThreadInput.restype = wintypes.BOOL
-    user32.BringWindowToTop.argtypes = (wintypes.HWND,)
-    user32.BringWindowToTop.restype = wintypes.BOOL
-    user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
-    user32.SetForegroundWindow.restype = wintypes.BOOL
-    kernel32.GetCurrentThreadId.argtypes = ()
-    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
-
-    hwnd = wintypes.HWND(int(window.winId()))
-    foreground = user32.GetForegroundWindow()
-    current_thread = kernel32.GetCurrentThreadId()
-    foreground_thread = user32.GetWindowThreadProcessId(foreground, None)
-
-    attached = user32.AttachThreadInput(current_thread, foreground_thread, True)
-    user32.BringWindowToTop(hwnd)
-    user32.SetForegroundWindow(hwnd)
-    if attached:
-        user32.AttachThreadInput(current_thread, foreground_thread, False)
+    focus_window(int(window.winId()))
 
 
 class ShortcutCaptureButton(QPushButton):
@@ -153,6 +129,10 @@ class MainWindow(QMainWindow):
         self.on_settings_changed = on_settings_changed
         self.hide_on_close = True
         self._armed = False
+        self._library = False
+        self._return_hwnd = 0
+        self._paste_hwnd = 0
+        self._paste_attempts = 0
         self._mode = "browse"
         self._edit_id: str | None = None
         self._edit_original: tuple[str, str, str] = ("", "", "")
@@ -197,6 +177,13 @@ class MainWindow(QMainWindow):
         self.warning.setWordWrap(True)
         self.warning.hide()
 
+        self.library_button = QPushButton("☰")
+        self.library_button.setObjectName("headerButton")
+        self.library_button.setToolTip("All templates")
+        self.library_button.setAccessibleName("Templates")
+        self.library_button.setCheckable(True)
+        self.library_button.clicked.connect(self._on_library_button)
+
         self.settings_button = QPushButton("⚙")
         self.settings_button.setObjectName("iconButton")
         self.settings_button.setToolTip("Settings")
@@ -205,6 +192,7 @@ class MainWindow(QMainWindow):
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(self.library_button)
         header.addStretch()
         header.addWidget(self.settings_button)
 
@@ -485,9 +473,54 @@ class MainWindow(QMainWindow):
         self.warning.setText("\n".join(self._warnings))
         self.warning.show()
 
+    def _on_library_button(self) -> None:
+        """Toggle the overview. The button's checked state is already updated."""
+        if self._mode == "edit":
+            self.library_button.setChecked(False)
+            return
+        if self.library_button.isChecked():
+            self.open_library()
+            return
+        self.close_library()
+
+    def open_library(self) -> None:
+        if self._mode == "edit":
+            self.library_button.setChecked(False)
+            return
+        if self._mode == "settings":
+            self.close_settings()
+        self._mode = "browse"
+        self._library = True
+        self.library_button.setChecked(True)
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self.refresh_results()
+        self._set_status(LIBRARY_HINT)
+        if self.results.count() > 0:
+            self.results.setFocus()
+        else:
+            self.search.setFocus()
+
+    def close_library(self) -> None:
+        self._library = False
+        self.library_button.setChecked(False)
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self.refresh_results()
+        self._clear_status()
+        self.search.setFocus()
+
     def refresh_results(self, _text: str | None = None) -> None:
         self._armed = False
-        matches = self.store.search(self.search.text())
+        if self._library and self.search.text().strip():
+            self._library = False
+            self.library_button.setChecked(False)
+        if self._library:
+            matches = sorted(self.store.templates, key=lambda template: template.title.casefold())
+        else:
+            matches = self.store.search(self.search.text())
 
         self.results.blockSignals(True)
         self.results.clear()
@@ -506,6 +539,14 @@ class MainWindow(QMainWindow):
         self._update_action_buttons()
 
     def show_and_focus(self) -> None:
+        previous = foreground_window()
+        own = int(self.winId())
+        if previous and previous != own:
+            self._return_hwnd = previous
+        if self._library:
+            self._library = False
+            self.library_button.setChecked(False)
+            self.refresh_results()
         self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -646,6 +687,9 @@ class MainWindow(QMainWindow):
         if self._mode == "settings":
             self.close_settings()
             return
+        if self._library:
+            self.close_library()
+            return
         self.hide()
 
     def _guard_save(self, action):
@@ -694,7 +738,26 @@ class MainWindow(QMainWindow):
             )
             return
         self._set_status(f"Copied “{template.title}”.", state="copied")
-        self.hide()
+        self._paste_hwnd = self._return_hwnd
+        self._paste_attempts = PASTE_RETRIES
+        self._paste_tick()
+
+    def _paste_tick(self) -> None:
+        """Restore the previous window, paste once it is foreground, then hide.
+
+        Ctrl+V is best-effort. A rejected keystroke is not shown as an error.
+        """
+        if self._paste_hwnd:
+            focus_window(self._paste_hwnd)
+        if self._paste_hwnd and foreground_window() == self._paste_hwnd:
+            send_ctrl_v()
+            self.hide()
+            return
+        self._paste_attempts -= 1
+        if self._paste_attempts <= 0:
+            self.hide()
+            return
+        QTimer.singleShot(PASTE_RETRY_MS, self, self._paste_tick)
 
     def _move_selection(self, delta: int) -> None:
         row = next_result_row(self.results.count(), self.results.currentRow(), delta)

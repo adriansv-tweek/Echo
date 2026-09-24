@@ -195,6 +195,25 @@ QPushButton#iconButton:disabled {
     background: transparent;
     color: $icon_disabled;
 }
+QPushButton#headerButton {
+    padding: 0;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    font-size: 14px;
+    border: none;
+    background: transparent;
+    color: $icon_text;
+}
+QPushButton#headerButton:hover {
+    background: $icon_hover_bg;
+    color: $icon_hover_text;
+}
+QPushButton#headerButton:checked {
+    background: $select_bg;
+    color: $select_text;
+}
 QPushButton#themeOption {
     padding: 6px 18px;
 }

@@ -235,7 +235,13 @@ class SettingsViewTest(unittest.TestCase):
         self.assertTrue(window._armed)
         self.assertFalse(window.isHidden())
 
-        with patch("ui.copy_text", return_value=True):
+        window._return_hwnd = 55
+        with (
+            patch("ui.copy_text", return_value=True),
+            patch("ui.foreground_window", return_value=55),
+            patch("ui.focus_window"),
+            patch("ui.send_ctrl_v", return_value=True),
+        ):
             window._handle_enter()
         self.assertTrue(window.isHidden())
 
